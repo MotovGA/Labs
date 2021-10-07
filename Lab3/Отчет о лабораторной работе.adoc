@@ -119,5 +119,6 @@ int main()
 
 Для демонстрации работы программы предоставим видео.
 
+ifndef::env-github[]
 video::Io-4uzy9xz0[youtube]
-
+endif::[]
