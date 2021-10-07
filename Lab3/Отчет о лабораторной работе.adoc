@@ -119,5 +119,5 @@ int main()
 
 Для демонстрации работы программы предоставим видео.
 
-video::vid.mp4[]
+video::vid.mp4[opts="autoplay, loop"]
 
