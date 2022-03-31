@@ -1,0 +1,186 @@
+:figure-caption: Рисунок
+:toc:
+:toc-title: Оглавление
+[.text-center]
+МИНИСТЕРСТВО НАУКИ И ВЫСШЕГО ОБРАЗОВАНИЯ РОССИЙСКОЙ ФЕДЕРАЦИИ +
+Федеральное государственное автономное образовательное учреждение высшего образования +
+«Южно-Уральский государственный университет» +
+(национальный исследовательский университет) +
+Высшая школа электроники и компьютерных наук +
+Кафедра «Информационно-измерительная техника»
+
+[.text-center]
+= Отчет по лабораторной работе №6
+
+[.text-center]
+Выполнили: +
+студенты группы КЭ-413 +
+Макаров А.А.
+Мотов Г.А.
+
+== Задание к работе
+----
+Написать программу, которая по нажатию на User Button зажигает все (4) светодиоды, по следующему нажатию тушит все
+(4) светодиоды
+----
+
+== Определяем к какому порту подключаем
+
+.Схема платы
+[#img-sunset]
+[link=https://github.com/MakarovSasha/Labs/blob/main/Lab%206]
+image::image-otch51.png[Sunset]
+
+На схеме можно увидить, что нужные порты для подключения светодиодов это:
+PА_5, PC_9, PC_8, PC_5, а также порт для подключения кнопки PC_13.
+
+.Взаимосвязь между светодиодом и выводами микроконтроллера
+|===
+| FLASH LED	 | MCU PIN
+
+|LED1
+|D13(PA5/PB13)
+
+|LED2
+|PC9
+
+|LED3
+|PC8
+
+|LED4
+|PC5
+
+|===
+
+=== Push button
+USER button. Кнопка пользователя подключается к I/O PC13(pin 2) целевого микроконтроллера, установив JP6 в положение ВКЛ.
+
+= *Регистр управления частотой*
+
+Clock Control register (CR) Системная тактовая частота для серии "STM32F411" может быть до 100 МГц. Для ее формирования используются 3 основных источника — HSI, HSE, PLL. Включение и выключение основных генераторов производится через регистр *RCC_CR* — Clock Control register.
+
+|===
+| Bit 24 PLLON	 | Включить PLL. Этот бит устанавливается и скидывается программно, чтобы включить PLL. Бит не может быть скинут, если PLL уже используется как системная частота. 0:  PLL *OFF* 1: PLL *ON*
+|===
+
+Сразу после установки частоты, нужно проверить, что частота с нового источника стабилизировалась. Для этого используются те же поля того же регистра CR, оканчивающиеся на RDY (Ready)
+
+|===
+| Bit 25 PLLRDY	 |  Флаг готовности частоты PLL. Этот бит устанавливается аппаратно 0: PLL *unlocked* 1: PLL *locked*
+| Bit 17: HSERDY | Флаг готовности частоты HSE. Этот бит устанавливается аппаратно. 0: HSE *oscillator not ready*  1: HSE *oscillator ready*
+| Bit 1: HSIRDY	 | Флаг готовности частоты HSI. Этот бит устанавливается аппаратно 0: HSI *oscillator not ready*  1: HSI *oscillator ready*
+|===
+
+После включения генераторов частоты, необходимо выбрать один из них в качестве источника для системной частоты SYSCLK. Выбор осуществляется через регистр RCC_CFGR — Clock Configuration Register.
+
+|===
+| Bits 1:0 SW	 | Выбор источника частоты. 00: HSI *scillator selected as system clock* 01: HSE *oscillator selected as system clock* 10: PLL *selected as system clock* 11: *not allowed*
+|===
+
+= *Регистры портов общего назначения*
+
+*GPIOx_MODER* (port mode register) Задает режимы работы индивидуально каждого из вывода порта. Каждый из выводов GPIO может быть настроен как вход, выход, работать в аналоговом режиме, или подключен к одной из альтернативных функций.
+
+|===
+|MODERy[1:0]:	Биты конфигурации порта x (y=0..15)
+Эти биты записываются программным обеспечением для настройки режима направления ввода-вывода. |*00*: Ввод (состояние сброса); *01*: Режим вывода общего назначения; *10*: Режим альтернативной функции; *11*: Аналоговый режим.
+|===
+
+
+*GPIOx_OSPEEDR* (port output speed register). Задает скорость работы порта: 400кГц, 2МГц, 10МГц и 40Мгц.
+|===
+
+|OSPEEDRy[1:0]:Биты конфигурации порта x (y=0..15)
+Эти биты записываются программным обеспечением для настройки скорости вывода ввода-вывода.|*00*: Низкая скорость; *01*: Средняя скорость; *10*: Быстрая скорость; *11*: Высокая скорость
+
+|===
+
+
+*GPIOx_IDR* (input data register). регистр входных данных, из которого считывается состояние входов порта. +
+IDRy: Входные данные порта (y=0..15)
+Эти биты доступны только для чтения и доступны только в режиме чтения. Они содержат входное значение соответствующего порта ввода-вывода.
+
+*GPIOx_ODR* (output data register). регистр выходных данных. Запись числа в младшие 16 бит, приводит к появлению соответствующих уровней на выводах порта. +
+ODRy: Выходные данные порта (y=0..15)
+Эти биты могут быть прочитаны и записаны программным обеспечением. +
+Примечание: Для набора/сброса атомарных битов биты ODR могут быть индивидуально установлены и сброшены путем записи
+в регистр Gpioc_BSRR (x = A..E и H).
+
+= *Код*
+
+=== Код подключения
+[source, c]
+#include <rccregisters.hpp> // for RCC
+#include <gpiocregisters.hpp> //for GPIOC
+#include <gpioaregisters.hpp> //for GPIOA
+std::uint32_t SystemCoreClock = 16'000'000U;
+extern "C"
+{
+int __low_level_init(void)
+{
+//Switch on external 16 MHz oscillator
+RCC::CR::HSEON::On::Set();
+while (RCC::CR::HSERDY::NotReady::IsSet())
+{
+}
+//Switch system clock on external oscillator
+RCC::CFGR::SW::Hse::Set();
+while (!RCC::CFGR::SWS::Hse::IsSet())
+{
+}
+//Подключить порт А к шине тактирования
+RCC::AHB1ENR::GPIOAEN::Enable::Set();
+//Подключить порт С к шине тактирования
+RCC::AHB1ENR::GPIOCEN::Enable::Set();
+  //настройка портов 5,5,8,9,13
+  GPIOA::OSPEEDR::OSPEEDR5::MediumSpeed::Set();
+  GPIOA::MODER::MODER5::Output::Set();
+  GPIOC::OSPEEDR::OSPEEDR5::MediumSpeed::Set();
+  GPIOC::MODER::MODER5::Output::Set();
+  GPIOC::OSPEEDR::OSPEEDR8::MediumSpeed::Set();
+  GPIOC::MODER::MODER8::Output::Set();
+  GPIOC::OSPEEDR::OSPEEDR9::MediumSpeed::Set();
+  GPIOC::MODER::MODER9::Output::Set();
+  GPIOC::OSPEEDR::OSPEEDR13::MediumSpeed::Set();
+  GPIOC::MODER::MODER13::Input::Set();
+return 1;
+}
+}
+
+=== Код программы
+
+[source, c]
+int main()
+{
+static int flag = 0;
+for(;;)
+  {
+    if ((GPIOC::IDR::IDR13::Low::IsSet()) && (flag == 0))
+      {
+        GPIOA::ODR::ODR5::High::Set();
+        GPIOC::ODR::ODR5::High::Set();
+        GPIOC::ODR::ODR8::High::Set();
+        GPIOC::ODR::ODR9::High::Set();
+        flag++;
+        continue;
+      }
+    if ((GPIOC::IDR::IDR13::Low::IsSet()) && (flag == 1) )
+      {
+        GPIOA::ODR::ODR5::Low::Set();
+        GPIOC::ODR::ODR5::Low::Set();
+        GPIOC::ODR::ODR8::Low::Set();
+        GPIOC::ODR::ODR9::Low::Set();
+        flag = 0;
+        continue;
+      }
+  }
+return 1;
+}
+
+== Результат программы
+
+
+.Результат программы
+[#img-sunset]
+[link=https://github.com/MakarovSasha/Labs/blob/main/Lab%206]
+image::Lab%206.gif[Sunset]
